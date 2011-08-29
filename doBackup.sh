@@ -11,7 +11,7 @@ blockSize="1M"
 
 function quit {
 	if [ "$wasRunning" -eq "0" ]; then
-		$virsh start "$domain"
+		$virsh start "$domain" > /dev/null 2>&1
 	fi
 	echo "$1"
 	echo "Operation took $((`date +%s` - $start)) seconds."
@@ -26,7 +26,7 @@ until [ "$isRunning" -eq "1" ]; do
 	if [ "$isRunning" -eq "0" ]; then
 		echo "Guest is running."
 		wasRunning="0"
-		$virsh shutdown "$domain"
+		$virsh shutdown "$domain" > /dev/null 2>&1
 	else
 		echo "Copying $blockdev to $image"
 		$dd if="$blockdev" of="$image" bs="$blockSize"

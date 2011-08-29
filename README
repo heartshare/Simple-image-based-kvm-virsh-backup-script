@@ -1,0 +1,3 @@
+The included script will perform a very simple backup of KVM guests using virsh to control the machines.
+
+As far as I know, the guest must be configured with ACPI support and must shutdown or hibernate when the virual power button is pressed.
