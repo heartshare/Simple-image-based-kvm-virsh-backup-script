@@ -1,8 +1,9 @@
 #!/bin/bash
-#TODO: these variables should be set at the command line
+#variables for command line arguments... we may not need these
 domain=""
 blockdev=""
 image=""
+snapshot=""
 
 dd="/bin/dd"
 virsh="/usr/bin/virsh"
@@ -11,18 +12,28 @@ isRunning="0"
 wasRunning="1"
 start=`date +%s`
 blockSize="1M"
-compress="0"
+compress="1"
 
 function Quit {
-	if [ -n "$*" ] ; then 
-		echo "$*";
-		exit
+	#if the guest was running we restart it
+	if [ "$wasRunning" -eq "0" ]; then
+		Guest restore
 	fi
 
-	if [ "$wasRunning" -eq "0" ]; then
-		$virsh start "$domain" > /dev/null 2>&1
+	#if we received a reason to end we echo it, if not we give the length of time it took (probably it was successful)
+	if [ -n "$*" ] ; then 
+		echo "$*";
+	else
+		echo "Operation took $((`date +%s` - $start)) seconds."
 	fi
-	echo "Operation took $((`date +%s` - $start)) seconds."
+
+	#we do some cleanup
+	if [ ! -z "$snapshot" ] ; then
+		if [ -a "$snapshot" ] ; then
+			RemoveSnapshot
+		fi
+	fi
+	
 	exit
 }
 
@@ -32,6 +43,7 @@ function Usage {
 	echo "-o path of output file"
 	echo "-n name of guest"
 	echo "-z compress the archive using gzip"
+	echo "-s make a snapshot an immediately restart the guest"
 	Quit
 }
 
@@ -54,17 +66,77 @@ function CheckFiles {
 	if [ -e "$image" ]; then
 		Quit "$image already exists";
 	fi
+
+	#check if we have access to the files
+	if [ ! -r "$blockdev" ] ; then
+		Quit "You do not have read access for $blockdev"
+	fi
+	if [ -a "$image" ] ; then
+		Quit "$image already exists";
+		#Quit "You do not have write access for $image"
+	fi
+	if [ -a "$snapshot" ] ; then
+		Quit "$snapshot already exists!";
+	fi
 }
 
+function MakeSnapshot {
+	#TODO: need more testing of error checking
+	lvcreate -L `blockdev --getsize64 $blockdev`B --snapshot -n "$snapshot" "$blockdev"
+	if [ "$?" -eq "0" ] ; then
+		echo "nothing" > /dev/null
+	else
+		Quit "An error occurred created the snapshot volume"
+	fi
+}
+
+function RemoveSnapshot {
+	#TODO: we might need more error checking here...
+	lvremove -f "$snapshot"
+	if [ ! "$?" -eq "0" ] ; then	#we have to check if the remove failed because for some reason the lvm reports that it can't be removed sometimes
+		echo "Retrying RemoveSnapshot"
+		sleep 5
+		RemoveSnapshot
+	fi
+}
+
+function Backup {
+	if [ "$compress" -eq "0" ] ; then
+		echo "Copying $blockdev to $image and compressing with gzip"
+		$dd if="$blockdev" bs="$blockSize" | $gzip > $image #TODO need error check
+	else
+		echo "Copying $blockdev to $image"
+		$dd if="$blockdev" bs="$blockSize" | $dd of="$image" bs="$blockSize"
+	fi
+}
+
+function Guest {
+	case "$1" in
+		"start") $virsh start "$domain";;
+		"stop") $virsh shutdown "$domain";;
+		"restore")
+			if [ "$wasRunning" -eq "0" ] ; then
+				virsh start "$domain"
+				wasRunning="1"
+			fi
+			;;
+	esac
+}
+
+function Abort {
+	Quit "Received INT or TERM signal"
+}
+trap Abort INT TERM #i may need to include exit here as well...
 
 #get the options
-while getopts "i:o:n:z" Option
+while getopts "i:o:n:s:z" Option
 do
   case $Option in
     i)blockdev="$OPTARG";;
     o)image="$OPTARG";;
     n)domain="$OPTARG";;
     z)compress="0";;
+    s)snapshot="$OPTARG";;
     ?)Usage;;
   esac
 done
@@ -78,17 +150,20 @@ until [ "$isRunning" -eq "1" ]; do
 	isRunning="$?"
 
 	if [ "$isRunning" -eq "0" ]; then
-		echo "Guest is running."
+		echo "Guest is running. Asking/waiting for guest to shutdown."
 		wasRunning="0"
 		$virsh shutdown "$domain" > /dev/null 2>&1
 	else
-		if [ -r "$blockdev" ] ; then
-			echo "Copying $blockdev to $image"
-			$dd if="$blockdev" bs="$blockSize" | $gzip > $image
-			Quit "Success!"
+		if [ -z $snapshot ] ; then
+			Backup
+			Quit
 		else
-			Quit "You do not have read access for $blockdev"
+			MakeSnapshot
+			Guest restore
+			Backup
+			Quit
 		fi
 	fi
-	sleep 60
+	sleep 10
 done
+
