@@ -1,10 +1,6 @@
 #!/bin/bash
-#variables for command line arguments... we may not need these
-domain=""
-blockdev=""
-image=""
-snapshot=""
 
+#internal configuration
 dd="/bin/dd"
 virsh="/usr/bin/virsh"
 gzip="/bin/gzip"
@@ -38,12 +34,13 @@ function Quit {
 }
 
 function Usage {
-	echo "Usage: `basename $0` -i source -o destination -n guestName [-z]"
+	echo "Usage: `basename $0` -i source -o destination -n guestName [-s spanshotdevicepath] [-z] [-w windowshostname]"
 	echo "-i file/device to backup"
 	echo "-o path of output file"
 	echo "-n name of guest"
 	echo "-z compress the archive using gzip"
 	echo "-s make a snapshot an immediately restart the guest"
+	echo "-w accepts the hostname of the windows guest in order to send an RPC shutdown command.  you can pass additional arguments to the net RPC command by enclosing the argument to this in quotes.  ex: -w \"hostname -U username%password"
 	Quit
 }
 
@@ -113,7 +110,14 @@ function Backup {
 function Guest {
 	case "$1" in
 		"start") $virsh start "$domain";;
-		"stop") $virsh shutdown "$domain";;
+		"stop") 
+			if [ -n "$winHost"  ] ; then
+				echo "Attempting to shutdown windows host $winHost"
+				net rpc shutdown -I "$winHost" -U "$winUser" -C "This system will go down for a short time to perform backups."
+			else
+				$virsh shutdown "$domain"
+			fi
+			;;
 		"restore")
 			if [ "$wasRunning" -eq "0" ] ; then
 				virsh start "$domain"
@@ -129,7 +133,7 @@ function Abort {
 trap Abort INT TERM #i may need to include exit here as well...
 
 #get the options
-while getopts "i:o:n:s:z" Option
+while getopts "i:o:n:s:w:U:z" Option
 do
   case $Option in
     i)blockdev="$OPTARG";;
@@ -137,6 +141,8 @@ do
     n)domain="$OPTARG";;
     z)compress="0";;
     s)snapshot="$OPTARG";;
+    w)winHost="$OPTARG";;
+    U)winUser="$OPTARG";;
     ?)Usage;;
   esac
 done
@@ -152,7 +158,7 @@ until [ "$isRunning" -eq "1" ]; do
 	if [ "$isRunning" -eq "0" ]; then
 		echo "Guest is running. Asking/waiting for guest to shutdown."
 		wasRunning="0"
-		$virsh shutdown "$domain" > /dev/null 2>&1
+		Guest stop
 	else
 		if [ -z $snapshot ] ; then
 			Backup
@@ -164,6 +170,6 @@ until [ "$isRunning" -eq "1" ]; do
 			Quit
 		fi
 	fi
-	sleep 10
+	sleep 60
 done
 
