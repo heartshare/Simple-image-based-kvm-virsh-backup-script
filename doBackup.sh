@@ -41,6 +41,7 @@ function Usage {
 	echo "-z compress the archive using gzip"
 	echo "-s make a snapshot an immediately restart the guest"
 	echo "-w accepts the hostname of the windows guest in order to send an RPC shutdown command.  you can pass additional arguments to the net RPC command by enclosing the argument to this in quotes.  ex: -w \"hostname -U username%password"
+	echo "-U username to use if -w is called.  can also use username%password.
 	Quit
 }
 
